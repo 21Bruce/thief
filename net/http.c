@@ -1,7 +1,14 @@
 #include "http.h"
 #define URLLEN 256
-#define HTMLLEN 32768 
+#define HTMLLEN 100000  
+#define TIMEOUT 5
 #define LEN(url) strlen(url)
+
+static sigjmp_buf e;
+
+static void httptimeout(int signo) {
+	siglongjmp(e, 1);
+}
 
 void parseurl(char *u, char *p, char *h, int *pt,
 	char *pa) {
@@ -91,62 +98,64 @@ static int tcpconnect(int port, char *hostname) {
 	return tcpsocket;
 }	
 
-static void makegetrequest(char *req, int req_len, char *path, char *hostname) {
-	snprintf(req, req_len, "GET %s HTTP/1.1\r\n", path);	
+static void makegetrequest(char *req, int req_len, char *path, char *hostname,
+		 char * version) {
+	snprintf(req, req_len, "GET %s HTTP/%s\r\n", path, version);	
 	snprintf(req + strlen(req), req_len - strlen(req), "Host: %s\r\n", hostname); 
 	snprintf(req + strlen(req), req_len - strlen(req), "\r\n");
 }
 
 static void recvhtml(int fd, char *html, size_t len) {
-	char *end = html + len;
-	char *curr = html;
+	if (sigsetjmp(e, 1) == 1) return;
+	signal(SIGALRM, httptimeout); 
+
+	int chlen;
+	char *bend = html + len;
+	char *cend = html;
+	char *chstrt;
+	char *chend;
+	char *tmp;
 	char *body = 0;
-	char *strenc;
-	enum {length, chunk, conn};
+	enum {chunk=1, length=2};
 	int encoding = 0;
 	int remaining = 0;
-	int bytes_recv;
-	while (1) {
-		if ((bytes_recv = recv(fd, curr, end - curr, 0)) < 1) 
-			if (body && encoding == conn) 
-				break;
-		curr += bytes_recv;			
-		*curr = '\0';
-		if (!body && (body = strstr(html, "\r\n\r\n")))
-			body += 4;
-		
-		if ((strenc = strstr(html, "\nContent-Length: "))) {
-			encoding = length; 
-			strenc = strchr(strenc, ' ');
-			strenc++;
-			remaining = strtol(strenc, 0, 10);
-		} else if ((strenc = strstr(html, "\nTransfer-Encoding: chunked"))) {
+
+	alarm(TIMEOUT);
+	while ((chlen = recv(fd, cend, bend-cend, 0)) > 0) {
+		cend += chlen;	
+		*cend = '\0';
+		if (!body && (body = strstr(html, "\r\n\r\n"))) {
+			body += 2;
+			chend = body;
+		} 
+		if (!encoding && (tmp = strstr(html, "\nContent-Length: "))) {
+			encoding = length;
+			tmp = strchr(tmp, ' ');
+			remaining = strtol(tmp, 0, 10);
+			body += 2;
+		}
+		if (!encoding && (tmp = strstr(html, "\nTransfer-Encoding: chunked")))
 			encoding = chunk;
-			remaining = 0;
-		} else {
-			encoding = conn;
+		
+		if (!encoding)
+			body += 2;
+			
+		if (encoding == length && cend-body >= remaining) 
+			return;
+
+		if (encoding == chunk) {
+			if (!remaining && (chstrt = strstr(chend, "\r\n"))) {
+				chstrt += 2;
+				remaining = strtol(chstrt, 0, 16);
+				if (!remaining) return;
+				chstrt = strstr(chstrt, "\r\n") + 2;
+			}
+			if (remaining && (chend = strstr(chstrt, "\r\n"))) {
+				remaining -= chend-chstrt;
+			}
 		}
 		
-		if (encoding == length && curr-body >= remaining)
-			break;
-		if (encoding == chunk) {
-			do {
-				if (remaining == 0) {
-					if ((strenc = strstr(body, "\r\n"))) {
-						remaining = strtol(body, 0, 16);
-						fprintf(stderr, "ChunLen: %d\n", remaining);
-						if (!remaining) return;
-						body = strenc + 2;
-					} else {break;}
-				}
-				if (remaining && curr - body >= remaining) {
-					body += remaining + 2;
-					remaining = 0;
-				}
-			} while(!remaining);
-		}
-	}	
-	
+	}
 }
 
 char *gethttpurl(char *u) {
@@ -157,7 +166,7 @@ char *gethttpurl(char *u) {
 	parseurl(u, protocol, hostname,
 		&port, path);
 	char req[1024];
-	makegetrequest(req, 1024, path, hostname);
+	makegetrequest(req, 1024, path, hostname, "1.1");
 	int wwwconn = tcpconnect(port, hostname);		
 	send(wwwconn, req, strlen(req), 0);
 	char *html = (char *) malloc(HTMLLEN);
@@ -173,8 +182,7 @@ int main (int argc, char *argv[]) {
 	char hostname[32];
 	int port = 80;
 	char path[256];
-	parseurl(argv[1], protocol, hostname,
-		&port, path);
-	printf("path: %s\n", path);
+	char *html = gethttpurl(argv[1]);
+	printf("%s\n", html);
 }
 

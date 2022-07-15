@@ -12,6 +12,8 @@
 #include <netdb.h>
 #include <errno.h>
 #include <time.h>
+#include <signal.h>
+#include <setjmp.h>
 
 #include "../lib/elib.h"
 
