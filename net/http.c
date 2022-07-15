@@ -121,7 +121,7 @@ static void recvhtml(int fd, char *html, size_t len) {
 	int remaining = 0;
 
 	alarm(TIMEOUT);
-	while ((chlen = recv(fd, cend, bend-cend, 0)) > 0) {
+	while ((chlen = recv(fd, cend, bend-cend, 0)) > 1) {
 		cend += chlen;	
 		*cend = '\0';
 		if (!body && (body = strstr(html, "\r\n\r\n"))) {
@@ -176,13 +176,4 @@ char *gethttpurl(char *u) {
 	return html;
 }
 
-
-int main (int argc, char *argv[]) {
-	char protocol[32];
-	char hostname[32];
-	int port = 80;
-	char path[256];
-	char *html = gethttpurl(argv[1]);
-	printf("%s\n", html);
-}
 

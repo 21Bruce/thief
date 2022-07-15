@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <curl/curl.h>
 #include <errno.h>
 #include <time.h>
 #include <signal.h>
