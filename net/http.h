@@ -11,16 +11,9 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
+#include <time.h>
 
 #include "../lib/elib.h"
-
-typedef struct {
-	char *protocol;
-	char *hostname;
-	int *port;
-	char *filename;
-	char **query;
-} urlent; 
 
 void parseurl(char *url, char *protocol, char *hostname,
 	int *port, char *path);

@@ -1,6 +1,6 @@
 #include "http.h"
 #define URLLEN 256
-#define HTMLLEN 8192 
+#define HTMLLEN 32768 
 #define LEN(url) strlen(url)
 
 void parseurl(char *u, char *p, char *h, int *pt,
@@ -14,24 +14,26 @@ void parseurl(char *u, char *p, char *h, int *pt,
 	p = pstart;
 	curr = curr + 3;
 	char *hstart = h;
-	while (*curr != ':' && curr - u < size) 
+	while (*curr != ':' && *curr != '/' && curr - u < size) 
 		*h++ = *curr++;
-	curr++;
 	*h = '\0';
 	h = hstart;	
-	char ptstr[6];
-	int i;
-	for (i = 0; *curr != '/'; i++)
-		ptstr[i] = *curr++;
-	ptstr[i+1] = '\0';
-	*pt = atoi(ptstr);
+	if (*curr == ':') {
+		curr++;
+		char ptstr[6];
+		int i;
+		for (i = 0; *curr != '/'; i++)
+			ptstr[i] = *curr++;
+		ptstr[i+1] = '\0';
+		*pt = atoi(ptstr);
+	} 
 	char *pastrt = pa;	
-	while (curr - u < size)
+	while (curr - u < size & *curr != '#')
 		*pa++ = *curr++;
 	*pa = '\0';
 	pa = pastrt;	
 }
-		
+
 void parsepath(char *p, char *f, char **q, int *q_len) {
 	int size = strlen(p);	
 	char *curr = p;
@@ -41,8 +43,8 @@ void parsepath(char *p, char *f, char **q, int *q_len) {
 	*f = '\0';
 	f = fstart;
 	int arg;
-	if (*curr == '?') {
-		*q_len = 0;
+	*q_len = 0;
+	if (*curr == '?') 
 		while (curr - p < size) {
 			curr++;
 			*q_len += 1;
@@ -52,9 +54,6 @@ void parsepath(char *p, char *f, char **q, int *q_len) {
 				*qcurr++ = *curr++;
 			*qcurr = '\0';
 		}
-	} else {
-		*q_len = 0;
-	}
 }
 
 char *makeurl(char *p, char *h, int *pt, char *f, char **q, int q_len) {
@@ -98,31 +97,84 @@ static void makegetrequest(char *req, int req_len, char *path, char *hostname) {
 	snprintf(req + strlen(req), req_len - strlen(req), "\r\n");
 }
 
+static void recvhtml(int fd, char *html, size_t len) {
+	char *end = html + len;
+	char *curr = html;
+	char *body = 0;
+	char *strenc;
+	enum {length, chunk, conn};
+	int encoding = 0;
+	int remaining = 0;
+	int bytes_recv;
+	while (1) {
+		if ((bytes_recv = recv(fd, curr, end - curr, 0)) < 1) 
+			if (body && encoding == conn) 
+				break;
+		curr += bytes_recv;			
+		*curr = '\0';
+		if (!body && (body = strstr(html, "\r\n\r\n")))
+			body += 4;
+		
+		if ((strenc = strstr(html, "\nContent-Length: "))) {
+			encoding = length; 
+			strenc = strchr(strenc, ' ');
+			strenc++;
+			remaining = strtol(strenc, 0, 10);
+		} else if ((strenc = strstr(html, "\nTransfer-Encoding: chunked"))) {
+			encoding = chunk;
+			remaining = 0;
+		} else {
+			encoding = conn;
+		}
+		
+		if (encoding == length && curr-body >= remaining)
+			break;
+		if (encoding == chunk) {
+			do {
+				if (remaining == 0) {
+					if ((strenc = strstr(body, "\r\n"))) {
+						remaining = strtol(body, 0, 16);
+						fprintf(stderr, "ChunLen: %d\n", remaining);
+						if (!remaining) return;
+						body = strenc + 2;
+					} else {break;}
+				}
+				if (remaining && curr - body >= remaining) {
+					body += remaining + 2;
+					remaining = 0;
+				}
+			} while(!remaining);
+		}
+	}	
+	
+}
+
 char *gethttpurl(char *u) {
 	char protocol[32];
 	char hostname[32];
-	int port;
+	int port = 80;
 	char path[256];
 	parseurl(u, protocol, hostname,
 		&port, path);
-	fprintf(stderr, "protocol: %s\n", protocol);
-	fprintf(stderr, "hostname: %s\n", hostname);
-	fprintf(stderr, "port: %d\n", port);
-	fprintf(stderr, "path: %s\n", path);
 	char req[1024];
 	makegetrequest(req, 1024, path, hostname);
-	printf("Req:\n%s\n", req);
 	int wwwconn = tcpconnect(port, hostname);		
 	send(wwwconn, req, strlen(req), 0);
-	char *res = (char *) malloc(HTMLLEN);
-	ssize_t reslen;
-	while ((reslen = recv(wwwconn, res, HTMLLEN, 0)) > 0)
-		printf("%.*s\n", (int) reslen, res);  	
-	return res;	
+	char *html = (char *) malloc(HTMLLEN);
+	memset(html, 0, HTMLLEN);
+	recvhtml(wwwconn, html, HTMLLEN);
+	close(wwwconn);
+	return html;
 }
 
-int main () {
-	
-	char *url = "https://www.google.com:80/";	
-	gethttpurl(url);
+
+int main (int argc, char *argv[]) {
+	char protocol[32];
+	char hostname[32];
+	int port = 80;
+	char path[256];
+	parseurl(argv[1], protocol, hostname,
+		&port, path);
+	printf("path: %s\n", path);
 }
+
