@@ -10,6 +10,8 @@
 
 #include "../lib/elib.h"
 
-void linkparse(char *html, char *token, char links[][256], int *l_len, int pos); 
+#define LPBGN 1
+
+void linkparse(char *html, char *token, char links[][256], int *l_len, int flag); 
 
 #endif /*__htmllib__ */

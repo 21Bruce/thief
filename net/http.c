@@ -1,7 +1,7 @@
 #include "http.h"
 #define URLLEN 256
 #define HTMLLEN 100000  
-#define TIMEOUT 5
+#define TIMEOUT 5 
 #define LEN(url) strlen(url)
 
 static sigjmp_buf e;
@@ -105,60 +105,98 @@ static void makegetrequest(char *req, int req_len, char *path, char *hostname,
 	snprintf(req + strlen(req), req_len - strlen(req), "\r\n");
 }
 
-static void recvhtml(int fd, char *html, size_t len) {
-	if (sigsetjmp(e, 1) == 1) return;
-	signal(SIGALRM, httptimeout); 
-
-	int chlen;
-	char *bend = html + len;
-	char *cend = html;
+static void recvhttp(int fd, char *header, char *html, size_t hben) {
+	int rlen = 4096;
+	char rstr[rlen]; 
+	memset(rstr, 0, rlen);
+	char *h = header;
+	char *p = html;
 	char *chstrt;
 	char *chend;
+	char *rend;
 	char *tmp;
-	char *body = 0;
-	enum {chunk=1, length=2};
+	int bfound = 0;
+	int rchln;
+	enum {length=1, chunk=2};
 	int encoding = 0;
 	int remaining = 0;
+	while ((rchln = recv(fd, rstr, rlen, 0)) > 1) {
+		rend = rstr + rchln;
+		chstrt = rstr;
+		// Header loading 
+		if (!bfound && !(chstrt = strstr(rstr, "\r\n\r\n"))) { 
+			memcpy(h, rstr, rchln);
+			h += rchln;
+		} else if (!bfound) {
+			bfound = 1;
+			*chstrt = '\0';
+			chstrt += 4;
+			strcpy(h, rstr);
+		}
 
-	alarm(TIMEOUT);
-	while ((chlen = recv(fd, cend, bend-cend, 0)) > 1) {
-		cend += chlen;	
-		*cend = '\0';
-		if (!body && (body = strstr(html, "\r\n\r\n"))) {
-			body += 2;
-			chend = body;
-		} 
-		if (!encoding && (tmp = strstr(html, "\nContent-Length: "))) {
-			encoding = length;
+		if (!bfound) continue;
+
+		// Encoding scanning
+		if (!encoding && (tmp = strstr(header, "\nContent-Length: "))) {
 			tmp = strchr(tmp, ' ');
 			remaining = strtol(tmp, 0, 10);
-			body += 2;
+			encoding = length;
 		}
-		if (!encoding && (tmp = strstr(html, "\nTransfer-Encoding: chunked")))
-			encoding = chunk;
+
+		if (!encoding && (tmp = strstr(header, "\nTransfer-Encoding: chunked"))) 
+			encoding = chunk;	
 		
-		if (!encoding)
-			body += 2;
-			
-		if (encoding == length && cend-body >= remaining) 
-			return;
+		if (encoding == length) {
+			int llen = rchln - (chstrt-rstr);
+			memcpy(p, chstrt, llen);
+			p += llen;
+			*p = '\0';
+			remaining -= llen;			
+			if (remaining == 0) return;
+		}
 
 		if (encoding == chunk) {
-			if (!remaining && (chstrt = strstr(chend, "\r\n"))) {
-				chstrt += 2;
-				remaining = strtol(chstrt, 0, 16);
-				if (!remaining) return;
-				chstrt = strstr(chstrt, "\r\n") + 2;
-			}
-			if (remaining && (chend = strstr(chstrt, "\r\n"))) {
-				remaining -= chend-chstrt;
+			int chln;
+			while (1) {
+				if (!remaining) {
+					chln = rend - chstrt;
+					remaining = strtol(chstrt, 0, 16);
+					if (!remaining) return;
+					chstrt = strstr(chstrt, "\r\n") + 2;
+				} 
+				if (remaining) {
+					chln = rend - chstrt;	
+					if (chln < remaining) {
+						memcpy(p, chstrt, chln);
+						p += chln;
+						*p = '\0';
+						remaining -= chln;
+						break;
+					}
+						
+					chend = strnstr(chstrt, "\r\n", chln);
+					while (chend - chstrt != remaining) {
+						chend += 2;
+						chend = strnstr(chend, "\r\n", rend-chend);
+					}
+							
+					chln = chend - chstrt;
+					memcpy(p, chstrt, chln);
+					p += chln;
+					*p = '\0';
+					remaining -= chln;
+					chstrt = chend + 2;
+					if (chstrt >= rend) break;
+							
+				}
 			}
 		}
-		
+		memset(rstr, 0, rlen);
 	}
 }
-
-char *gethttpurl(char *u) {
+				 
+	
+void gethttpurl(char *u, char **header, char **html) {
 	char protocol[32];
 	char hostname[32];
 	int port = 80;
@@ -169,11 +207,9 @@ char *gethttpurl(char *u) {
 	makegetrequest(req, 1024, path, hostname, "1.1");
 	int wwwconn = tcpconnect(port, hostname);		
 	send(wwwconn, req, strlen(req), 0);
-	char *html = (char *) malloc(HTMLLEN);
-	memset(html, 0, HTMLLEN);
-	recvhtml(wwwconn, html, HTMLLEN);
+	*html = (char *) malloc(HTMLLEN);
+	*header = (char *) malloc(1024);
+	recvhttp(wwwconn, *header, *html, HTMLLEN);
 	close(wwwconn);
-	return html;
 }
-
 

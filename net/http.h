@@ -27,7 +27,7 @@ void parsepath(char *path, char *filename, char **query,
 char* makeurl(char *protocol, char *hostname,
 	int *port, char *filename, char **query, int q_len);
 
-char *gethttpurl(char *url);
+void gethttpurl(char *url, char **header, char **html);
 
 
 #endif /*__httplib__*/
