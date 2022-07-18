@@ -41,6 +41,7 @@ void parseurl(char *u, char *p, char *h, int *pt,
 	pa = pastrt;	
 }
 
+
 void parsepath(char *p, char *f, char **q, int *q_len) {
 	int size = strlen(p);	
 	char *curr = p;
@@ -61,6 +62,22 @@ void parsepath(char *p, char *f, char **q, int *q_len) {
 				*qcurr++ = *curr++;
 			*qcurr = '\0';
 		}
+}
+
+static int findcookies(char *header, char *cookies, int clen) {
+	char *strt = strstr(header, "\nSet-Cookie: ");	
+	if (!strt) strt = strstr(header, "\nset-cookie: ");	
+	if (!strt) return 0;
+	strt += 13; 
+	char *end = strstr(strt, "\r\n");
+	char *curr = strt;
+	while (curr != end && curr < strt + clen)
+		*cookies++ = *curr++;
+	return 1;
+}
+	
+static int parsecookie(char *header, char cookies[][256], int *c_len) {
+	return 0;
 }
 
 char *makeurl(char *p, char *h, int *pt, char *f, char **q, int q_len) {
@@ -99,13 +116,16 @@ static int tcpconnect(int port, char *hostname) {
 }	
 
 static void makegetrequest(char *req, int req_len, char *path, char *hostname,
-		 char * version) {
+		 char * version, char *cookies)  {
 	snprintf(req, req_len, "GET %s HTTP/%s\r\n", path, version);	
 	snprintf(req + strlen(req), req_len - strlen(req), "Host: %s\r\n", hostname); 
+	if (cookies)
+		snprintf(req + strlen(req), req_len - strlen(req),
+				 "Cookie: %s\r\n", cookies);
 	snprintf(req + strlen(req), req_len - strlen(req), "\r\n");
 }
 
-static void recvhttp(int fd, char *header, char *html, size_t hben) {
+static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen) {
 	int rlen = 4096;
 	char rstr[rlen]; 
 	memset(rstr, 0, rlen);
@@ -120,9 +140,11 @@ static void recvhttp(int fd, char *header, char *html, size_t hben) {
 	enum {length=1, chunk=2};
 	int encoding = 0;
 	int remaining = 0;
+	int status = 0;
 	while ((rchln = recv(fd, rstr, rlen, 0)) > 1) {
 		rend = rstr + rchln;
 		chstrt = rstr;
+
 		// Header loading 
 		if (!bfound && !(chstrt = strstr(rstr, "\r\n\r\n"))) { 
 			memcpy(h, rstr, rchln);
@@ -136,23 +158,30 @@ static void recvhttp(int fd, char *header, char *html, size_t hben) {
 
 		if (!bfound) continue;
 
+		// Status scanning
+		if (!status && (tmp = strchr(header, ' '))) 
+			status = strtol(tmp, 0, 10); 
+		
 		// Encoding scanning
-		if (!encoding && (tmp = strstr(header, "\nContent-Length: "))) {
+		if (!encoding && (tmp = strstr(header, "\nContent-Length: "))
+				|| (tmp = strstr(header, "\ncontent-length: "))) {
 			tmp = strchr(tmp, ' ');
 			remaining = strtol(tmp, 0, 10);
 			encoding = length;
 		}
 
-		if (!encoding && (tmp = strstr(header, "\nTransfer-Encoding: chunked"))) 
+		if (!encoding && (tmp = strstr(header, "\nTransfer-Encoding: chunked"))
+				|| (tmp = strstr(header, "\ntransfer-encoding: chunked"))) 
 			encoding = chunk;	
 		
+		// Chunk processing
 		if (encoding == length) {
 			int llen = rchln - (chstrt-rstr);
 			memcpy(p, chstrt, llen);
 			p += llen;
 			*p = '\0';
 			remaining -= llen;			
-			if (remaining == 0) return;
+			if (remaining <= 0) return status;
 		}
 
 		if (encoding == chunk) {
@@ -161,7 +190,7 @@ static void recvhttp(int fd, char *header, char *html, size_t hben) {
 				if (!remaining) {
 					chln = rend - chstrt;
 					remaining = strtol(chstrt, 0, 16);
-					if (!remaining) return;
+					if (!remaining) return status;
 					chstrt = strstr(chstrt, "\r\n") + 2;
 				} 
 				if (remaining) {
@@ -187,29 +216,68 @@ static void recvhttp(int fd, char *header, char *html, size_t hben) {
 					remaining -= chln;
 					chstrt = chend + 2;
 					if (chstrt >= rend) break;
-							
 				}
 			}
 		}
 		memset(rstr, 0, rlen);
 	}
+	return status;
 }
 				 
-	
-void gethttpurl(char *u, char **header, char **html) {
+void gethttp(char *u, char *header, size_t helen, char *html, size_t htlen) {
+	char *version = "1.1";
+	char *url = u;
 	char protocol[32];
 	char hostname[32];
+	char *cookies = NULL;
+	int c_len = 5;
 	int port = 80;
-	char path[256];
-	parseurl(u, protocol, hostname,
-		&port, path);
+	char path[512];
+	int status = 0;
+	int wwwconn;
 	char req[1024];
-	makegetrequest(req, 1024, path, hostname, "1.1");
-	int wwwconn = tcpconnect(port, hostname);		
-	send(wwwconn, req, strlen(req), 0);
-	*html = (char *) malloc(HTMLLEN);
-	*header = (char *) malloc(1024);
-	recvhttp(wwwconn, *header, *html, HTMLLEN);
+	while (status != 200) {
+		parseurl(url, protocol, hostname,
+			&port, path);
+		wwwconn = tcpconnect(port, hostname);		
+		makegetrequest(req, 1024, path, hostname, 
+				version, cookies);
+		send(wwwconn, req, strlen(req), 0);
+		status = recvhttp(wwwconn, header, helen, html, htlen);
+		if (status / 100 == 5) {
+			close(wwwconn);
+			if (!strcmp(version, "1.1")) version = "2";
+			else if (!strcmp(version, "2")) version = "1.1";
+			continue;
+		}
+		if (status / 100 == 3) {
+			close(wwwconn);
+			if (!cookies) {
+				cookies = (char *) malloc (256);
+				if (!findcookies(header, cookies, 256)) {
+					free(cookies);  
+					cookies = NULL; 
+				}
+			}
+			char *urlstrt = strstr(header, "\nLocation: ");
+			if (!urlstrt) urlstrt = strstr(header, "\nlocation: ");
+			urlstrt += 11;
+			char *urlend = strstr(urlstrt, "\r\n");
+			*urlend = '\0';
+			url = urlstrt;
+			continue;
+		}
+		break;
+	}
 	close(wwwconn);
 }
 
+int main(int argc, char *argv[]) {
+
+	char *header = (char *) malloc(1024);
+	char *html = (char *) malloc(HTMLLEN);
+	gethttp(argv[1], header, 1024, html, HTMLLEN);
+	printf("%s\n%s\n", header, html);
+	free(header);
+	free(html);
+}
