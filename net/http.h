@@ -23,7 +23,7 @@ void parseurl(char *url, char *protocol, char *hostname,
 void parsepath(char *path, char *filename, char **query,
 	int *q_len);
 
-char* makeurl(char *protocol, char *hostname,
+void makeurl(char *url, char *protocol, char *hostname,
 	int *port, char *filename, char **query, int q_len);
 
 void gethttp(char *url, char *header, size_t helen, char *html,

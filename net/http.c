@@ -64,36 +64,42 @@ void parsepath(char *p, char *f, char **q, int *q_len) {
 		}
 }
 
-static int findcookies(char *header, char *cookies, int clen) {
-	char *strt = strstr(header, "\nSet-Cookie: ");	
-	if (!strt) strt = strstr(header, "\nset-cookie: ");	
-	if (!strt) return 0;
-	strt += 13; 
-	char *end = strstr(strt, "\r\n");
-	char *curr = strt;
-	while (curr != end && curr < strt + clen)
-		*cookies++ = *curr++;
-	return 1;
-}
-	
-static int parsecookie(char *header, char cookies[][256], int *c_len) {
-	return 0;
+static void findcookies(char *header, char cookies[][512], int *cblen, int clen) {
+	char *strt = header;
+	char *end = strt;
+	char *currchar;
+	char *currcook;
+	int bufflen = *cblen;
+	*cblen = 0;
+	while (1) {
+		strt = strstr(end, "\nSet-Cookie: ");
+		if (!strt) strt = strstr(end, "\nset-cookie: "); 
+		if (!strt) return;
+		if (*cblen == bufflen) return;
+		currcook = cookies[*cblen];
+		strt += 13; 
+		end = strstr(strt, "\r\n");
+		currchar = strt;
+		while (currchar != end && currchar < strt + clen - 1)
+			*currcook++ = *currchar++;
+		*currcook = '\0';
+		*cblen += 1;
+		end++;
+	}
 }
 
-char *makeurl(char *p, char *h, int *pt, char *f, char **q, int q_len) {
-	char *url = (char *) malloc(URLLEN);
+void makeurl(char *url, char *p, char *h, int *pt, char *f, char **q, int q_len) {
 	snprintf(url, URLLEN, "%s://", p);
-	snprintf(url + LEN(url), URLLEN - LEN(url), "%s", h);
-	if (pt) snprintf(url + LEN(url), URLLEN - LEN(url), ":%d", *pt);
-	snprintf(url + LEN(url), URLLEN - LEN(url), "%s", f);
-	if (q_len) snprintf(url + LEN(url), URLLEN - LEN(url), "?");
+	snprintf(url + strlen(url), URLLEN - strlen(url), "%s", h);
+	if (pt) snprintf(url + strlen(url), URLLEN - strlen(url), ":%d", *pt);
+	snprintf(url + strlen(url), URLLEN - strlen(url), "%s", f);
+	if (q_len) snprintf(url + strlen(url), URLLEN - strlen(url), "?");
 	char **curr; 
 	for (int i = 0; i < q_len; i++) {	
 		curr = q + i;
-		snprintf(url + LEN(url), URLLEN - LEN(url), "%s", *curr);
-		if (i != q_len-1) snprintf(url + LEN(url), URLLEN - LEN(url), "&");
+		snprintf(url + strlen(url), URLLEN - strlen(url), "%s", *curr);
+		if (i != q_len-1) snprintf(url + strlen(url), URLLEN - strlen(url), "&");
 	}
-	return url;
 }
 
 static int tcpconnect(int port, char *hostname) {
@@ -116,12 +122,13 @@ static int tcpconnect(int port, char *hostname) {
 }	
 
 static void makegetrequest(char *req, int req_len, char *path, char *hostname,
-		 char * version, char *cookies)  {
+		 char * version, char cookies[][512], int clen)  {
 	snprintf(req, req_len, "GET %s HTTP/%s\r\n", path, version);	
 	snprintf(req + strlen(req), req_len - strlen(req), "Host: %s\r\n", hostname); 
-	if (cookies)
-		snprintf(req + strlen(req), req_len - strlen(req),
-				 "Cookie: %s\r\n", cookies);
+	if (clen)
+		for (int i = 0; i < clen; i++)	
+			snprintf(req + strlen(req), req_len - strlen(req),
+				 "Cookie: %s\r\n", cookies[i]);
 	snprintf(req + strlen(req), req_len - strlen(req), "\r\n");
 }
 
@@ -151,8 +158,9 @@ static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen
 			h += rchln;
 		} else if (!bfound) {
 			bfound = 1;
+			chstrt += 2;
 			*chstrt = '\0';
-			chstrt += 4;
+			chstrt += 2;
 			strcpy(h, rstr);
 		}
 
@@ -229,49 +237,49 @@ void gethttp(char *u, char *header, size_t helen, char *html, size_t htlen) {
 	char *url = u;
 	char protocol[32];
 	char hostname[32];
-	char *cookies = NULL;
-	int c_len = 5;
+	char cookies[25][512];
+	int cbuflen = 25;
+	int clen = 0;
 	int port = 80;
 	char path[512];
 	int status = 0;
 	int wwwconn;
 	char req[1024];
-	while (status != 200) {
+	while (1) {
 		parseurl(url, protocol, hostname,
 			&port, path);
 		wwwconn = tcpconnect(port, hostname);		
 		makegetrequest(req, 1024, path, hostname, 
-				version, cookies);
+				version, cookies, clen);
 		send(wwwconn, req, strlen(req), 0);
 		status = recvhttp(wwwconn, header, helen, html, htlen);
-		if (status / 100 == 5) {
-			close(wwwconn);
-			if (!strcmp(version, "1.1")) version = "2";
-			else if (!strcmp(version, "2")) version = "1.1";
-			continue;
+		switch(status/100) {
+			case 5:
+				close(wwwconn);
+				if (!strcmp(version, "1.1")) version = "2";
+				else if (!strcmp(version, "2")) version = "1.1";
+				break;
+			case 3:
+				close(wwwconn);
+				clen = cbuflen;
+				findcookies(header, cookies, &clen, 512);
+				char *urlstrt = strstr(header, "\nLocation: ");
+				if (!urlstrt) urlstrt = strstr(header, "\nlocation: ");
+				urlstrt += 11;
+				char *urlend = strstr(urlstrt, "\r\n");
+				*urlend = '\0';
+				url = urlstrt;
+				break;
+			case 2:
+				close(wwwconn);
+				return;
+			default:
+				break;
 		}
-		if (status / 100 == 3) {
-			close(wwwconn);
-			if (!cookies) {
-				cookies = (char *) malloc (256);
-				if (!findcookies(header, cookies, 256)) {
-					free(cookies);  
-					cookies = NULL; 
-				}
-			}
-			char *urlstrt = strstr(header, "\nLocation: ");
-			if (!urlstrt) urlstrt = strstr(header, "\nlocation: ");
-			urlstrt += 11;
-			char *urlend = strstr(urlstrt, "\r\n");
-			*urlend = '\0';
-			url = urlstrt;
-			continue;
-		}
-		break;
 	}
-	close(wwwconn);
 }
 
+//TEST
 int main(int argc, char *argv[]) {
 
 	char *header = (char *) malloc(1024);

@@ -1,7 +1,7 @@
 #include "html.h"
 
 void linkparse(char *html, char *token, char links[][256], int *l_len, int flag) {
-	char lbuf[500];	
+	char lbuf[256];	
 	int clen = 0;
 	int count = 0;
 	char *lstrt = html;
