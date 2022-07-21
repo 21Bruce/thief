@@ -17,19 +17,27 @@ int main(int argc, char *argv[]) {
 
 	int i;
 	int tmp;
-	for (int i = 0; i < tlen; i++) {
-		snprintf(lib, 512, "http://libgen.rs/%s", links[i]); 
-		get(lib, header, sizeof(header), html, sizeof(html));
+	
+	pid_t pid;
+	for (int i = 0; i < tlen; i++)
+		if ((pid = fork()) == 0) {
+			snprintf(lib, 512, "http://libgen.rs/%s", links[i]); 
+			get(lib, header, sizeof(header), html, sizeof(html));
 
-		tmp = 1;
-		linkparse(html, "library.lol", link, &tmp, 0);
+			tmp = 1;
+			linkparse(html, "library.lol", link, &tmp, 0);
 
-		get(link[0], header, sizeof(header), html, sizeof(html));
-		tmp = 1;
-		linkparse(html, "main", link, &tmp, 0);
+			get(link[0], header, sizeof(header), html, sizeof(html));
+			tmp = 1;
+			linkparse(html, "main", link, &tmp, 0);
 
-		get(link[0], header, sizeof(header), html, sizeof(html));
-	}
+			get(link[0], header, sizeof(header), html, sizeof(html));
+			break;
+		} 
+
+	if (pid != 0)
+		for (int j = 0; j < tlen; j++)
+			wait(NULL);
 
 	free(html);
 	free(header);
