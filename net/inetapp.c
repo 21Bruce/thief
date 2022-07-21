@@ -1,8 +1,7 @@
-#include "http.h"
+#include "inetapp.h"
 #define URLLEN 256
 #define HTMLLEN 100000  
 #define TIMEOUT 5 
-#define LEN(url) strlen(url)
 
 static sigjmp_buf e;
 
@@ -142,7 +141,10 @@ static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen
 	char *chend;
 	char *rend;
 	char *tmp;
+	FILE *book = NULL;
 	int bfound = 0;
+	int filef = 0;
+	int isFile = 0;
 	int rchln;
 	enum {length=1, chunk=2};
 	int encoding = 0;
@@ -181,15 +183,39 @@ static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen
 		if (!encoding && (tmp = strstr(header, "\nTransfer-Encoding: chunked"))
 				|| (tmp = strstr(header, "\ntransfer-encoding: chunked"))) 
 			encoding = chunk;	
-		
+
+		//File Scane
+		if (!filef) {
+			filef = 1;
+			if (strstr(header, "\nContent-Type: application/octet-stream")) {
+				isFile = 1;
+				tmp = strstr(header, "; filename=") + 11;
+				char delim = *tmp;
+				tmp++;
+				char *endnm = strchr(tmp, delim);
+				*endnm = '\0';
+				book = fopen(tmp, "ab");
+				*endnm = delim;
+			}
+		}
+				
+				
 		// Chunk processing
 		if (encoding == length) {
 			int llen = rchln - (chstrt-rstr);
-			memcpy(p, chstrt, llen);
-			p += llen;
-			*p = '\0';
+			if (isFile) {
+				fwrite(chstrt, sizeof(char), llen,
+					book);
+			} else {
+				memcpy(p, chstrt, llen);
+				p += llen;
+				*p = '\0';
+			}
 			remaining -= llen;			
-			if (remaining <= 0) return status;
+			if (remaining <= 0) {
+				if (isFile) fclose(book);
+				return status;
+			}	
 		}
 
 		if (encoding == chunk) {
@@ -198,19 +224,26 @@ static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen
 				if (!remaining) {
 					chln = rend - chstrt;
 					remaining = strtol(chstrt, 0, 16);
-					if (!remaining) return status;
+					if (!remaining) {
+						if (isFile) fclose(book);
+						return status;
+					}
 					chstrt = strstr(chstrt, "\r\n") + 2;
 				} 
 				if (remaining) {
 					chln = rend - chstrt;	
 					if (chln < remaining) {
-						memcpy(p, chstrt, chln);
-						p += chln;
-						*p = '\0';
+						if (isFile) {
+							fwrite(chstrt, sizeof(char), chln,
+								book);
+						} else {
+							memcpy(p, chstrt, chln);
+							p += chln;
+							*p = '\0';
+						}
 						remaining -= chln;
 						break;
 					}
-						
 					chend = strnstr(chstrt, "\r\n", chln);
 					while (chend - chstrt != remaining) {
 						chend += 2;
@@ -218,9 +251,14 @@ static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen
 					}
 							
 					chln = chend - chstrt;
-					memcpy(p, chstrt, chln);
-					p += chln;
-					*p = '\0';
+					if (isFile) {
+						fwrite(chstrt, sizeof(char), chln,
+							book);
+					} else {
+						memcpy(p, chstrt, chln);
+						p += chln;
+						*p = '\0';
+					}
 					remaining -= chln;
 					chstrt = chend + 2;
 					if (chstrt >= rend) break;
@@ -229,11 +267,17 @@ static int recvhttp(int fd, char *header, size_t helen, char *html, size_t htlen
 		}
 		memset(rstr, 0, rlen);
 	}
+	if (isFile) fclose(book);
 	return status;
 }
-				 
-void gethttp(char *u, char *header, size_t helen, char *html, size_t htlen) {
-	char *version = "1.1";
+	
+static void gethttps(char *u, char *header, size_t helen,
+	char *rsc, size_t rlen) {
+}
+
+static void gethttp(char *u, char *header, size_t helen, 
+	char *rsc, size_t rlen) {
+ 	char *version = "1.1";
 	char *url = u;
 	char protocol[32];
 	char hostname[32];
@@ -248,11 +292,13 @@ void gethttp(char *u, char *header, size_t helen, char *html, size_t htlen) {
 	while (1) {
 		parseurl(url, protocol, hostname,
 			&port, path);
+		if (strcmp(protocol, "https") == 0) return gethttps(url,
+				header, helen, rsc, rlen); 
 		wwwconn = tcpconnect(port, hostname);		
 		makegetrequest(req, 1024, path, hostname, 
 				version, cookies, clen);
 		send(wwwconn, req, strlen(req), 0);
-		status = recvhttp(wwwconn, header, helen, html, htlen);
+		status = recvhttp(wwwconn, header, helen, rsc, rlen);
 		switch(status/100) {
 			case 5:
 				close(wwwconn);
@@ -274,18 +320,24 @@ void gethttp(char *u, char *header, size_t helen, char *html, size_t htlen) {
 				close(wwwconn);
 				return;
 			default:
-				break;
+				return;
 		}
 	}
 }
 
-//TEST
-int main(int argc, char *argv[]) {
 
-	char *header = (char *) malloc(1024);
-	char *html = (char *) malloc(HTMLLEN);
-	gethttp(argv[1], header, 1024, html, HTMLLEN);
-	printf("%s\n%s\n", header, html);
-	free(header);
-	free(html);
+			 
+void get(char *u, char *header, size_t helen, char *rsc, size_t rlen) {
+	char protocol[32];
+	char hostname[32];
+	char path[512];
+	int port = 80;
+	parseurl(u, protocol, hostname,
+			&port, path);
+	if (strcmp(protocol, "https") == 0) gethttps(u,
+			header, helen, rsc, rlen); 
+	if (strcmp(protocol, "http") == 0) gethttp(u,
+			header, helen, rsc, rlen); 
+	
 }
+
