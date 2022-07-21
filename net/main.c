@@ -3,7 +3,7 @@
 
 int main(int argc, char *argv[]) {
 
-	char lib[256]; 
+	char lib[512]; 
 	char *html = (char *) malloc (100000);
 	char *header = (char *) malloc (1024);
 	int blen = atoi(argv[2]);
@@ -18,13 +18,13 @@ int main(int argc, char *argv[]) {
 	int i;
 	int tmp;
 	for (int i = 0; i < tlen; i++) {
-		snprintf(lib, 256, "https://libgen.rs/%s", links[i]); 
+		snprintf(lib, 512, "http://libgen.rs/%s", links[i]); 
 		get(lib, header, sizeof(header), html, sizeof(html));
+
 		tmp = 1;
 		linkparse(html, "library.lol", link, &tmp, 0);
 
 		get(link[0], header, sizeof(header), html, sizeof(html));
-		fprintf(stderr, "%s\n%s\n", header, html);
 		tmp = 1;
 		linkparse(html, "main", link, &tmp, 0);
 
