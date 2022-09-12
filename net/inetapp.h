@@ -28,28 +28,5 @@ void makeurl(char *url, char *protocol, char *hostname,
 
 void get(char *url, char *header, size_t helen, char *rsc,
 	size_t rlen);
-
-/* FILE PRIVATE */
-
-static void httptimeout(int signo); 
-
-static void findcookies(char *header, char cookies[][512],
-	int *cblen, int clen);
-
-static int tcpconnect(int port, char *hostname);
-
-static void makegetrequest(char *req, int rlen, char *path,
-	char *hostname, char *version, char cookies[][512],
-	int clen);
-
-static int recvhttp(int fd, char *header, size_t helen,
-	char *rsc, size_t rlen);
-
-static void gethttps(char *url, char *header, size_t helen,
-	char *rsc, size_t rlen);
-
-static void gethttp(char *url, char *header, size_t helen,
-	char *rsc, size_t rlen);
-
 #endif /*__inetapplib__*/
 
