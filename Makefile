@@ -1,22 +1,36 @@
-MAKEFLAGS += -L
+BINARY=thief
+CODEDIRS= ./ ./net ./lib 
+# include code layers 
+INCDIRS= $(CODEDIRS)
 
-.PHONY: clean
-CXX = clang
+CC=gcc
+OPT=-O0
+DEPFLAGS=-MP -MD
+CFLAGS=-Wall -Wextra -g $(foreach D, $(INCDIRS), -I$(D)) $(OPT) $(DEPFLAGS)
 
-thief: main.c netlib.c parser.c ./lib/elib.c
-	$(CXX) $^ -o $@
+CFILES=$(foreach D, $(CODEDIRS), $(wildcard $(D)/*.c)) 
+OFILES=$(patsubst %.c, %.o, $(CFILES))
+DFILES=$(patsubst %.c, %.d, $(CFILES))
 
-main.o: main.c thief.h
-	$(CXX) -c $@
+ASMFLAGS=-Wall -Wextra -g $(foreach D, $(INCDIRS), -I$(D)) $(OPT) 
 
-parser.o: parser.c ./lib/elib.c 
-	$(CXX) -c $@ 
+SFILES=$(wildcard ./*.s)
 
-netlib.o: netlib.c ./lib/elib.c 
-	$(CXX) -c $@ 
+all: $(BINARY)
 
-elib.o: ./lib/elib.c 
-	$(CXX) -c $@
+$(BINARY): $(OFILES)
+	$(CC) -o $@ $^ 
 
-clean: 
-	-rm *.o *.txt
+%.o: $.c
+	$(CC) $(CFLAGS) -c -o $@ $^
+	
+clean:
+	rm -rf $(OFILES) $(DFILES) $(SFILES)
+
+asmdump: $(CFILES) 
+	$(CC) $(ASMFLAGS) -S $^
+
+run: 
+	@make -s $(BINARY) 
+	@./$(BINARY) 
+

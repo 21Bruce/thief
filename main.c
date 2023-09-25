@@ -3,7 +3,7 @@
 
 int main(int argc, char *argv[]) {
 
-	int batch = 2;
+	int batch = 8;
 	char query[512]; 
 	char *html = (char *) malloc (100000);
 	char *header = (char *) malloc (1024);
@@ -22,7 +22,6 @@ int main(int argc, char *argv[]) {
 	int j;
 	for (i = 0; i < tlen; i++) {
 		if ((pid = fork()) == 0) {
-			fprintf(stderr, "Processing Book: %d\n", i);
 			snprintf(query, sizeof(query), "http://libgen.rs/%s", links[i]); 
 			get(query, header, sizeof(header), html, sizeof(html));
 			tmp = 1;
@@ -33,11 +32,12 @@ int main(int argc, char *argv[]) {
 			linkparse(html, "main", link, &tmp, 0);
 
 			get(link[0], header, sizeof(header), html, sizeof(html));
-			sleep(120);
+			fprintf(stderr, "Processing Book: %d\n", i);
+			sleep(60);
 			break;
 		} else {
-			if (i + 1 % batch == 0) { 
-				printf("Batching...\n");
+			if ((i + 1) % batch == 0) { 
+                printf("Batching...\n");
 				for (j = 0; j < batch; j++)
 					wait(NULL);
 			}
