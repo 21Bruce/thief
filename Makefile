@@ -1,9 +1,9 @@
 BINARY=thief
-CODEDIRS= ./ ./net ./lib 
+CODEDIRS= . ./net ./lib
 # include code layers 
 INCDIRS= $(CODEDIRS)
 
-CC=gcc
+CC=clang
 OPT=-O0
 DEPFLAGS=-MP -MD
 CFLAGS=-Wall -Wextra -g $(foreach D, $(INCDIRS), -I$(D)) $(OPT) $(DEPFLAGS)
@@ -21,7 +21,7 @@ all: $(BINARY)
 $(BINARY): $(OFILES)
 	$(CC) -o $@ $^ 
 
-%.o: $.c
+%.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $^
 	
 clean:
